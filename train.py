@@ -114,14 +114,17 @@ def load_train_data_unsupervised(tokenizer, args):
     feature_list = []
     with open(args.train_file, 'r', encoding='utf8') as f:
         lines = f.readlines()
+
+        if args.debugger:
+            lines = lines[:1000]
         # lines = lines[:100]
         logger.info("len of train data:{}".format(len(lines)))
         for line in tqdm(lines):
             line = line.strip()
             feature = tokenizer([line, line], max_length=args.max_len, truncation=True, padding='max_length', return_tensors='pt')
             feature_list.append(feature)
-    with open(train_file_cache, 'wb') as f:
-        pickle.dump(feature_list, f)
+    # with open(train_file_cache, 'wb') as f:
+    #     pickle.dump(feature_list, f)
     return feature_list
 
 
@@ -148,8 +151,8 @@ def load_train_data_supervised(tokenizer, args):
         hard_neg = row['hard_neg']
         feature = tokenizer([sent0, sent1, hard_neg], max_length=args.max_len, truncation=True, padding='max_length', return_tensors='pt')
         feature_list.append(feature)
-    with open(train_file_cache, 'wb') as f:
-        pickle.dump(feature_list, f)
+    # with open(train_file_cache, 'wb') as f:
+    #     pickle.dump(feature_list, f)
     return feature_list
 
 
@@ -183,8 +186,8 @@ def load_eval_data(tokenizer, args, mode):
             data2 = tokenizer(line[6].strip(), max_length=args.max_len, truncation=True, padding='max_length', return_tensors='pt')
 
             feature_list.append((data1, data2, score))
-    with open(eval_file_cache, 'wb') as f:
-        pickle.dump(feature_list, f)
+    # with open(eval_file_cache, 'wb') as f:
+    #     pickle.dump(feature_list, f)
     return feature_list
 
 
@@ -247,11 +250,12 @@ if __name__ == '__main__':
     parser.add_argument("--overwrite_cache", action='store_true', default=False, help="overwrite cache")
     parser.add_argument("--do_train", action='store_true', default=True)
     parser.add_argument("--do_predict", action='store_true', default=True)
+    parser.add_argument("--debugger", action='store_true', default=False)
 
     args = parser.parse_args()
     seed_everything(args.seed)
     args.device = torch.device("cuda:0" if torch.cuda.is_available() and args.device == 'gpu' else "cpu")
-    args.output_path = join(args.output_path, args.train_mode, 'bsz-{}-lr-{}-dropout-{}'.format(args.batch_size_train, args.lr, args.dropout))
+    args.output_path = join(args.output_path, args.train_mode, 'RCL_bsz-{}-lr-{}-dropout-{}'.format(args.batch_size_train, args.lr, args.dropout))
     if not os.path.exists(args.output_path):
         os.makedirs(args.output_path)
 

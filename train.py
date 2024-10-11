@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 
 from dataset import TrainDataset, TestDataset
-from model import SimcseModel, simcse_unsup_loss, simcse_sup_loss
+from model import SimcseModel, simcse_unsup_loss, simcse_sup_loss, RCL_unsup_rank_loss
 from transformers import BertModel, BertConfig, BertTokenizer
 import os
 from os.path import join
@@ -55,7 +55,13 @@ def train(model, train_loader, dev_loader, optimizer, args):
 
             out = model(input_ids, attention_mask, token_type_ids)
             if args.train_mode == 'unsupervise':
-                loss = simcse_unsup_loss(out, device)
+
+
+                # loss = simcse_unsup_loss(out, device)
+                loss = RCL_unsup_rank_loss(out, device)
+
+
+
             else:
                 loss = simcse_sup_loss(out, device)
             optimizer.zero_grad()
@@ -227,6 +233,8 @@ def main(args):
 
 
 if __name__ == '__main__':
+
+    os.chdir(os.path.dirname(__file__))
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=str, default='gpu', choices=['gpu', 'cpu'], help="gpu or cpu")
     parser.add_argument("--output_path", type=str, default='output')
@@ -239,11 +247,11 @@ if __name__ == '__main__':
     parser.add_argument("--eval_step", type=int, default=100, help="every eval_step to evaluate model")
     parser.add_argument("--max_len", type=int, default=64, help="max length of input")
     parser.add_argument("--seed", type=int, default=42, help="random seed")
-    parser.add_argument("--train_file", type=str, default="data/nli_for_simcse.csv")
+    parser.add_argument("--train_file", type=str, default="data/wiki1m_for_simcse.txt")
     parser.add_argument("--dev_file", type=str, default="data/stsbenchmark/sts-dev.csv")
     parser.add_argument("--test_file", type=str, default="data/stsbenchmark/sts-test.csv")
     parser.add_argument("--pretrain_model_path", type=str,
-                        default="pretrain_model/bert-base-uncased")
+                        default="bert-base-uncased")
     parser.add_argument("--pooler", type=str, choices=['cls', "pooler", "last-avg", "first-last-avg"],
                         default='cls', help='pooler to use')
     parser.add_argument("--train_mode", type=str, default='unsupervise', choices=['unsupervise', 'supervise'], help="unsupervise or supervise")
@@ -256,6 +264,7 @@ if __name__ == '__main__':
     seed_everything(args.seed)
     args.device = torch.device("cuda:0" if torch.cuda.is_available() and args.device == 'gpu' else "cpu")
     args.output_path = join(args.output_path, args.train_mode, 'RCL_bsz-{}-lr-{}-dropout-{}'.format(args.batch_size_train, args.lr, args.dropout))
+
     if not os.path.exists(args.output_path):
         os.makedirs(args.output_path)
 

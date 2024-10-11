@@ -86,7 +86,7 @@ def evaluate(model, dataloader, device):
     sim_tensor = torch.tensor([], device=device)
     label_array = np.array([])
     with torch.no_grad():
-        for source, target, label in tqdm(dataloader):
+        for source, target, label in dataloader:
             # source        [batch, 1, seq_len] -> [batch, seq_len]
             source_input_ids = source.get('input_ids').squeeze(1).to(device)
             source_attention_mask = source.get('attention_mask').squeeze(1).to(device)
@@ -241,7 +241,7 @@ if __name__ == '__main__':
     parser.add_argument("--lr", type=float, default=3e-5)
     parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--epochs", type=int, default=3)
-    parser.add_argument("--batch_size_train", type=int, default=4)
+    parser.add_argument("--batch_size_train", type=int, default=64)
     parser.add_argument("--batch_size_eval", type=int, default=256)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--eval_step", type=int, default=100, help="every eval_step to evaluate model")

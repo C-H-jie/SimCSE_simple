@@ -112,6 +112,10 @@ def load_train_data_unsupervised(tokenizer, args):
     logger.info('loading unsupervised train data')
     output_path = os.path.dirname(args.output_path)
     train_file_cache = join(output_path, 'train-unsupervise.pkl')
+
+    if args.debugger:
+        train_file_cache = join(output_path, 'train-unsupervise-debug.pkl')
+
     if os.path.exists(train_file_cache) and not args.overwrite_cache:
         with open(train_file_cache, 'rb') as f:
             feature_list = pickle.load(f)
@@ -129,8 +133,8 @@ def load_train_data_unsupervised(tokenizer, args):
             line = line.strip()
             feature = tokenizer([line, line], max_length=args.max_len, truncation=True, padding='max_length', return_tensors='pt')
             feature_list.append(feature)
-    # with open(train_file_cache, 'wb') as f:
-    #     pickle.dump(feature_list, f)
+    with open(train_file_cache, 'wb') as f:
+        pickle.dump(feature_list, f)
     return feature_list
 
 
@@ -157,8 +161,8 @@ def load_train_data_supervised(tokenizer, args):
         hard_neg = row['hard_neg']
         feature = tokenizer([sent0, sent1, hard_neg], max_length=args.max_len, truncation=True, padding='max_length', return_tensors='pt')
         feature_list.append(feature)
-    # with open(train_file_cache, 'wb') as f:
-    #     pickle.dump(feature_list, f)
+    with open(train_file_cache, 'wb') as f:
+        pickle.dump(feature_list, f)
     return feature_list
 
 
@@ -192,8 +196,8 @@ def load_eval_data(tokenizer, args, mode):
             data2 = tokenizer(line[6].strip(), max_length=args.max_len, truncation=True, padding='max_length', return_tensors='pt')
 
             feature_list.append((data1, data2, score))
-    # with open(eval_file_cache, 'wb') as f:
-    #     pickle.dump(feature_list, f)
+    with open(eval_file_cache, 'wb') as f:
+        pickle.dump(feature_list, f)
     return feature_list
 
 
@@ -212,6 +216,7 @@ def main(args):
             train_data = load_train_data_supervised(tokenizer, args)
         elif args.train_mode == 'unsupervise':
             train_data = load_train_data_unsupervised(tokenizer, args)
+            
         train_dataset = TrainDataset(train_data, tokenizer, max_len=args.max_len)
         train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size_train, shuffle=True,
                                       num_workers=args.num_workers)
@@ -245,7 +250,7 @@ if __name__ == '__main__':
     parser.add_argument("--batch_size_eval", type=int, default=256)
     parser.add_argument("--num_workers", type=int, default=0)
     parser.add_argument("--eval_step", type=int, default=100, help="every eval_step to evaluate model")
-    parser.add_argument("--max_len", type=int, default=64, help="max length of input")
+    parser.add_argument("--max_len", type=int, default=32, help="max length of input")
     parser.add_argument("--seed", type=int, default=42, help="random seed")
     parser.add_argument("--train_file", type=str, default="data/wiki1m_for_simcse.txt")
     parser.add_argument("--dev_file", type=str, default="data/stsbenchmark/sts-dev.csv")
@@ -273,5 +278,4 @@ if __name__ == '__main__':
     logger.info(args)
     writer = SummaryWriter(args.output_path)
     main(args)
-
 

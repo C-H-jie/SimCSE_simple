@@ -55,7 +55,8 @@ def simcse_unsup_loss(y_pred, device, temp=0.05):
     # 相似度矩阵除以温度系数
     sim = sim / temp
     # 计算相似度矩阵与y_true的交叉熵损失
-    # 计算交叉熵，每个case都会计算与其他case的相似度得分，得到一个得分向量，目的是使得该得分向量中正样本的得分最高，负样本的得分最低
+    # 计算交叉熵，每个case都会计算与其他case的相似度得分，得到一个得分向量，
+    # 目的是使得该得分向量中正样本的得分最高，负样本的得分最低
     loss = F.cross_entropy(sim, y_true)
     return torch.mean(loss)
 
@@ -69,7 +70,8 @@ def RCL_unsup_rank_loss(y_pred, device, temp=0.05):
 
     1、batch 内两两计算相似度，得到相似矩阵
     2、设 Lpair 为 rankloss 的一部分，ranklosss = log∑∑Lpair(Si,Sj)
-        其中 Si 为第 i 个样本，Sj 为第 j 个样本，Si*与 Si#表示由 Si 经过 bert 两次后分别生成的两个正样本，Sj*与 Sj#表示由 Sj 经过 bert 两次后分别生成的两个负样本
+        其中 Si 为第 i 个样本，Sj 为第 j 个样本，Si*与 Si#表示由 Si 经过 bert 两次后分别生成的两个正样本，
+        Sj*与 Sj#表示由 Sj 经过 bert 两次后分别生成的两个负样本
         则 Lpari(Si,Sj) = Lp(Si*,Si#,Sj*) + Lp(Si*,Si#,Sj#) + Lp(Si#,Si*,Sj*) + Lp(Si#,Si*,Sj#)
         其中 Lp(A,B,C)可解释为：
             if Sim(A,B) < Sim(A,C):

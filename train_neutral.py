@@ -40,13 +40,14 @@ def seed_everything(seed=42):
     torch.backends.cudnn.deterministic = True
 
 
-def train(model, train_loader, dev_loader,optimizer, args):
+def train(model, train_loader, dev_loader, neutral_dataloader,optimizer, args):
     logger.info("start training")
     model.train()
     device = args.device
     best = 0
     for epoch in range(args.epochs):
-        for batch_idx, data in enumerate(tqdm(train_loader)):
+        train_neutral_loader = enumerate(zip(train_loader, neutral_dataloader))
+        for batch_idx, (data,data_neutral) in tqdm(train_neutral_loader,total=len(train_loader)):
             step = epoch * len(train_loader) + batch_idx
             # [batch, n, seq_len] -> [batch * n, sql_len]
             # data1 = train_loader[batch_idx]
@@ -55,15 +56,21 @@ def train(model, train_loader, dev_loader,optimizer, args):
             attention_mask = data['attention_mask'].view(-1, sql_len).to(device)
             token_type_ids = data['token_type_ids'].view(-1, sql_len).to(device)
 
-            out = model(input_ids, attention_mask, token_type_ids)
+            neutral_sel_len = data_neutral['input_ids'].shape[-1]
+            input_ids_neutral = data_neutral['input_ids'].view(-1, neutral_sel_len).to(device)
+            attention_mask_neutral = data_neutral['attention_mask'].view(-1, neutral_sel_len).to(device)
+            token_type_ids_neutral = data_neutral['token_type_ids'].view(-1, neutral_sel_len).to(device)
 
+            out = model(input_ids, attention_mask, token_type_ids)
+            out_neutral = model(input_ids_neutral, attention_mask_neutral, token_type_ids_neutral)
+            out_neutral = model.dropout(out_neutral)
             if args.train_mode == 'unsupervise':
 
 
                 # loss1 = simcse_unsup_loss(out, device)
                 # loss2 = RCL_unsup_rank_loss2(out, device)
-                loss,_ = RCL_unsup_rank_loss2(out, device)
-                loss = loss*0.5 + simcse_unsup_loss(out, device)*0.5
+                loss,sim = RCL_unsup_rank_loss2(out, device)
+                loss = loss + RCL_unsup_rank_loss_ClE(out,out_neutral,sim, device)*args.coefficient
                 # print(loss)
 
 
@@ -117,22 +124,27 @@ def load_train_data_unsupervised(tokenizer, args):
     logger.info('loading unsupervised train data')
     output_path = os.path.dirname(args.output_path)
     train_file_cache = join(output_path, 'train-unsupervise.pkl')
-
+    train_file_neutral_data_cache = join(output_path, 'train-unsupervise-neutral.pkl')
 
     if args.debugger:
         train_file_cache = join(output_path, 'train-unsupervise-debug.pkl')
+        train_file_neutral_data_cache = join(output_path, 'train-unsupervise-neutral-debug.pkl')
 
 
-
-    if os.path.exists(train_file_cache) and not args.overwrite_cache:
+    if os.path.exists(train_file_cache)  and os.path.exists(train_file_neutral_data_cache) and not args.overwrite_cache:
         # with open(train_file_cache, 'rb') as f:
             f1 = open(train_file_cache, 'rb')
             feature_list = pickle.load(f1)
-           
-            logger.info("len of train data:{}".format(len(feature_list)))
-            return feature_list
-    
 
+            f2 = open(train_file_neutral_data_cache, 'rb')
+            feature_list2 = pickle.load(f2)
+            logger.info("len of train data:{}".format(len(feature_list)))
+            return feature_list, feature_list2
+    
+    feature_list = []
+
+    # 中性样本构造
+    feature_list2 = []
     with open(args.train_file, 'r', encoding='utf8') as f:
         lines = f.readlines()
 
@@ -143,13 +155,14 @@ def load_train_data_unsupervised(tokenizer, args):
         for line in tqdm(lines):
             line = line.strip()
             feature = tokenizer([line, line], max_length=args.max_len, truncation=True, padding='max_length', return_tensors='pt')
-
+            feature2 = tokenizer([line], max_length=args.max_len, truncation=True, padding='max_length', return_tensors='pt')
             feature_list.append(feature)
-
+            feature_list2.append(feature2)
     with open(train_file_cache, 'wb') as f:
         pickle.dump(feature_list, f)
-
-    return feature_list
+    with open(train_file_neutral_data_cache, 'wb') as f:
+        pickle.dump(feature_list2, f)
+    return feature_list, feature_list2
 
 
 def load_train_data_supervised(tokenizer, args):
@@ -231,12 +244,14 @@ def main(args):
         if args.train_mode == 'supervise':
             train_data = load_train_data_supervised(tokenizer, args)
         elif args.train_mode == 'unsupervise':
-            train_data = load_train_data_unsupervised(tokenizer, args)
+            train_data,neutral_data = load_train_data_unsupervised(tokenizer, args)
             
         train_dataset = TrainDataset(train_data, tokenizer, max_len=args.max_len)
-
+        neutral_dataset = TrainDataset(neutral_data, tokenizer, max_len=args.max_len)
 
         train_dataloader = DataLoader(train_dataset, batch_size=args.batch_size_train, shuffle=True,
+                                      num_workers=args.num_workers)
+        neutral_dataloader = DataLoader(neutral_dataset, batch_size=args.batch_size_train, shuffle=True,
                                       num_workers=args.num_workers)
 
         dev_data = load_eval_data(tokenizer, args, 'dev')
@@ -247,7 +262,7 @@ def main(args):
         time_use = datetime.datetime.now() - start 
 
         logger.info('load data cost:{}'.format(time_use))
-        train(model, train_dataloader, dev_dataloader,optimizer, args)
+        train(model, train_dataloader, dev_dataloader, neutral_dataloader,optimizer, args)
     if args.do_predict:
         test_data = load_eval_data(tokenizer, args, 'test')
         test_dataset = TestDataset(test_data, tokenizer, max_len=args.max_len)
@@ -268,7 +283,7 @@ if __name__ == '__main__':
     parser.add_argument("--device", type=str, default='gpu', choices=['gpu', 'cpu'], help="gpu or cpu")
     parser.add_argument("--output_path", type=str, default='output')
     parser.add_argument("--lr", type=float, default=3e-5)
-    parser.add_argument("--dropout", type=float, default=0.2)
+    parser.add_argument("--dropout", type=float, default=0.1)
     parser.add_argument("--neutral_dropout", type=float, default=0.8)
     parser.add_argument("--coefficient", type=float, default=0.1)
     parser.add_argument("--epochs", type=int, default=1)
@@ -294,7 +309,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
     seed_everything(args.seed)
     args.device = torch.device("cuda:0" if torch.cuda.is_available() and args.device == 'gpu' else "cpu")
-    args.output_path = join(args.output_path, args.train_mode, 'RCL2_SIM_bsz-{}-lr-{}-dropout-{}'.format(args.batch_size_train, args.lr, args.dropout))
+    args.output_path = join(args.output_path, args.train_mode, 'RCL3-{}-lr-{}-dropout-{}'.format(args.batch_size_train, args.lr, args.dropout))
 
     if not os.path.exists(args.output_path):
         os.makedirs(args.output_path)

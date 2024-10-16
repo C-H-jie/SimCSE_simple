@@ -158,22 +158,32 @@ def RCL_unsup_rank_loss_ClE(y_pred,y_pred_CLN,sim, device):
     # 取出p3 即每一行的和
     p3 = torch.sum(result, dim=1)
     # print(p3)
-    loss = -torch.sum(torch.log(p1 / (p2 + p3)))
+    loss = -torch.sum(torch.log(p1 / p2)) / y_pred.shape[0]
     print(loss)
     return loss
 
 
-def RCL_unsup_rank_loss_ClE2(y_pred,y_pred_CLN,sim, device , temp=0.05):
+def RCL_unsup_rank_loss_ClE3(y_pred,y_pred_CLN, device , temp=0.05):
     '''
     RCL 无监督的损失函数, ClE 部分
     y_pred (tensor): 样本在 bert 的输出, [batch_size * 2, 768] --> [Si*,Si#,Sj*,Sj#]
     y_pred_CLN (tensor): 中性样本在 bert 的输出, [batch_size , 768] ---> [Si&, Sj&]
-    sim (tensor): 正例与负例两两的相似度, [batch_size*2, batch_size*2]
     '''
-    sim = sim * temp # 先取消温度系数，方便查看
+    # sim = sim * temp # 先取消温度系数，方便查看
     sim_ClE = F.cosine_similarity(y_pred_CLN.unsqueeze(0), y_pred.unsqueeze(1), dim=-1) / temp
-    y_true = torch.arange(y_pred_CLN.shape[0], device=device)
-    
+    y_true = torch.arange(y_pred_CLN.shape[0], device=device).unsqueeze(-1)
+    y_true = torch.repeat_interleave(y_true, 2, dim=-1)
+    y_true = y_true.view(-1)
+    indices = torch.arange(y_pred.shape[0], device=device)
+
+    sim_ClE = sim_ClE - sim_ClE[indices, y_true].view(sim_ClE.shape[0],1)
+
+    lpair_components = torch.where(sim_ClE <= 0, torch.tensor(-1.2000e+13, device=device), sim_ClE)
+    lpair_components = torch.cat((torch.zeros(1).to(lpair_components.device), lpair_components.view(-1)), dim=0)
+
+    loss = torch.logsumexp(lpair_components,dim=-1)
+
+    return loss
 
 
 
@@ -194,20 +204,17 @@ def simcse_unsup_loss(y_pred, device, temp=0.05):
     # 计算相似度矩阵与y_true的交叉熵损失
     # 计算交叉熵，每个case都会计算与其他case的相似度得分，得到一个得分向量，
     # 目的是使得该得分向量中正样本的得分最高，负样本的得分最低
+    print(y_true)
     loss = F.cross_entropy(sim, y_true)
     print(loss)
 
+
     sim = torch.exp(sim)
-
     p3 = torch.sum(sim, dim=1)
-
     indices = torch.arange(y_pred.shape[0], device=device)
     p1 = sim[indices, indices - indices % 2 * 2 + 1]
-
     loss1 = -torch.sum(torch.log(p1 / p3))
-
     loss1 = loss1 / y_pred.shape[0]
-
     print(loss1)
     return torch.mean(loss)
 
@@ -238,8 +245,11 @@ if __name__ == "__main__":
 
 
     # 计算损失
+    loss = simcse_unsup_loss(y_pred, device)
     loss,sim = RCL_unsup_rank_loss2(y_pred, device, temp=0.05)
+    loss2 = RCL_unsup_rank_loss_ClE(y_pred,y_pred_cln,sim, device)
     loss2 = RCL_unsup_rank_loss_ClE2(y_pred,y_pred_cln,sim, device)
+
 
     exit()
 

@@ -20,11 +20,15 @@ class SimcseModel(nn.Module):
         self.bert = BertModel.from_pretrained(pretrained_model, config=config)
         # self.bert = SimBertModel.from_pretrained(pretrained_model, config=config)
         self.pooling = pooling
-        # self.dropout1 = nn.Dropout(p = 0.2)
-        self.dropout = nn.Dropout(p =neutral_dropout)
+        # self.dropout1 = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(neutral_dropout)
 
-    def forward(self, input_ids, attention_mask, token_type_ids):
+    def forward(self, input_ids, attention_mask, token_type_ids,is_neutral=False): 
         out = self.bert(input_ids, attention_mask, token_type_ids, output_hidden_states=True, return_dict=True)
+        if is_neutral:
+            out = self.dropout(out.last_hidden_state[:, 0])
+            return out
+
         # return out[1]
         if self.pooling == 'cls':
             return out.last_hidden_state[:, 0]  # [batch, 768]
@@ -74,7 +78,7 @@ def simcse_unsup_loss(y_pred, device, temp=0.05):
     # loss1 = loss1 / y_pred.shape[0]
 
     # print(loss1)
-    return torch.mean(loss)
+    return torch.mean(loss),sim
 
 
 def RCL_unsup_rank_loss(y_pred, device, temp=0.05):
@@ -150,7 +154,6 @@ def RCL_unsup_rank_loss2(y_pred, device, temp=0.05):
     '''
     # 计算距离矩阵
     sim = F.cosine_similarity(y_pred.unsqueeze(1), y_pred.unsqueeze(0), dim=-1)
-    # sim = 1 - sim
 
     # 距离矩阵除以温度系数
     sim = sim  / temp
@@ -176,9 +179,15 @@ def RCL_unsup_rank_loss2(y_pred, device, temp=0.05):
     
     #CoSENT的loss计算
     lpair_components = result  - label_matrix * 1e12
+
+    # lpair_components = torch.where(lpair_components <= 0, torch.tensor(-1e12, device=device), lpair_components)
+
     lpair_components = torch.cat((torch.zeros(1).to(lpair_components.device), lpair_components.view(-1)), dim=0)
 
+    # print(torch.sum(lpair_components))
+
     return torch.logsumexp(lpair_components, dim=0),sim
+
 
 def RCL_unsup_rank_loss_ClE(y_pred,y_pred_CLN,sim, device , temp=0.05):
     '''
@@ -202,7 +211,7 @@ def RCL_unsup_rank_loss_ClE(y_pred,y_pred_CLN,sim, device , temp=0.05):
     # 中性样本与样例两两计算相似度，
     # [0,0]+[0,1],[1,3]+[1,4].....即为 p1
     # 每两列相加，即为 p2
-    sim_ClE = F.cosine_similarity(y_pred_CLN.unsqueeze(0), y_pred.unsqueeze(1), dim=-1) / temp
+    sim_ClE = F.cosine_similarity(y_pred_CLN.unsqueeze(0), y_pred.unsqueeze(1), dim=-1).to(device) / temp
     sim_ClE = torch.exp(sim_ClE)
     # print(sim_ClE)
 
@@ -219,26 +228,60 @@ def RCL_unsup_rank_loss_ClE(y_pred,y_pred_CLN,sim, device , temp=0.05):
     p2 = torch.sum(result, dim=1)
     # print(p2)
 
-    # label_matrix = torch.eye(y_pred.shape[0], dtype=torch.float).to(device)
-    # # 对于 i 是偶数的位置，赋值 (i, i+1) 和 (i+1, i) 为-1
-    # even_indices = torch.arange(0, y_pred.shape[0] - 1, 2)
-    # label_matrix[even_indices, even_indices + 1] = 1
-    # label_matrix[even_indices + 1, even_indices] = 1
-    # sim = sim  - label_matrix * 1e12
-    # sim1 = torch.exp(sim)
-    # # print(sim)
+    label_matrix = torch.eye(y_pred.shape[0], dtype=torch.float).to(device)
+    # 对于 i 是偶数的位置，赋值 (i, i+1) 和 (i+1, i) 为-1
+    even_indices = torch.arange(0, y_pred.shape[0] - 1, 2)
+    label_matrix[even_indices, even_indices + 1] = 1
+    label_matrix[even_indices + 1, even_indices] = 1
+    sim = sim  - label_matrix * 1e12
+    sim1 = torch.exp(sim)
+    # print(sim)
 
-    # # 重塑张量为二维，每两行作为一组
-    # reshaped_tensor = sim1.view(-1, 2, sim.shape[1])
-    # # 对每组的两行进行相加 , 这样每一行的和就是 p3
-    # result = torch.sum(reshaped_tensor, dim=1)
-    # # print(result)
-    # # 取出p3 即每一行的和
-    # p3 = torch.sum(result, dim=1)
+    # 重塑张量为二维，每两行作为一组
+    reshaped_tensor = sim1.view(-1, 2, sim.shape[1])
+    # 对每组的两行进行相加 , 这样每一行的和就是 p3
+    result = torch.sum(reshaped_tensor, dim=1)
+    # print(result)
+    # 取出p3 即每一行的和
+    p3 = torch.sum(result, dim=1)
     # print(p3)
-    loss = -torch.sum(torch.log(p1 / p2))
-    loss = loss / p1.shape[0]
+    loss = -torch.sum(torch.log(p1 / (p2+p3)))
+    # loss = loss / p1.shape[0]
     # print(loss)
+    return loss
+
+def RCL_unsup_rank_loss_ClE3(y_pred,y_pred_CLN, device , temp=0.05):
+    '''
+    RCL 无监督的损失函数, ClE 部分
+    y_pred (tensor): 样本在 bert 的输出, [batch_size * 2, 768] --> [Si*,Si#,Sj*,Sj#]
+    y_pred_CLN (tensor): 中性样本在 bert 的输出, [batch_size , 768] ---> [Si&, Sj&]
+    '''
+    # sim = sim * temp # 先取消温度系数，方便查看
+    sim_ClE = F.cosine_similarity(y_pred_CLN.unsqueeze(0), y_pred.unsqueeze(1), dim=-1) / temp
+
+    y_true = torch.arange(y_pred_CLN.shape[0], device=device).unsqueeze(-1)
+    y_true = torch.repeat_interleave(y_true, 2, dim=-1)
+    y_true = y_true.view(-1)
+
+    indices = torch.arange(y_pred.shape[0], device=device)
+    pos_sim_vector =  sim_ClE[indices, y_true].view(sim_ClE.shape[0],1)
+    sim_ClE = sim_ClE - pos_sim_vector
+
+    label_matrix = torch.zeros_like(sim_ClE)
+    label_matrix[indices, y_true] = 1
+
+    sim_ClE = sim_ClE - label_matrix * 1e12
+
+    lpair_components = sim_ClE
+    lpair_components = torch.where(lpair_components <= 0, torch.tensor(-1e+12, device=device), lpair_components)
+    lpair_components = torch.cat((torch.zeros(1).to(lpair_components.device), lpair_components.view(-1)), dim=0)
+
+    # print(torch.sum(lpair_components))
+
+    loss = torch.logsumexp(lpair_components,dim=-1)
+
+    print(loss)
+
     return loss
 
 
